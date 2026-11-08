@@ -125,7 +125,7 @@ int g_look = keymap::kDefaultLook;
 bool g_look_forced = false;
 
 // The title shows the speed; for a few seconds after F5, F8 or F9 a message is put in front of it.
-std::string g_speed_title = "ps2-native-recomp";
+std::string g_speed_title = "DivinePort";
 std::string g_game_title;  // optional PS2_WINDOW_TITLE, supplied by the launcher
 std::string g_notice_text;
 const char *const kStartNotice = "F1 = menu";  // the title for the first 30 s
@@ -1392,25 +1392,30 @@ bool no_limit() {
 
 void pace() {
     if (no_limit()) return;
-    static bool stuck = false;  // the device took no sound for a second; the clock paces the game until it takes some again
+    static bool stuck = false;
     if (g_audio && !(stuck && g_pipe->full())) {
-        // The audio device clock paces emulation: wait while more than ~80 ms of sound is waiting. The pipe times the game between
-        // the frames (how much it slows down decides how much the sound is stretched) and does not count this wait as slowness.
         g_pipe->frame(audio_seconds());
         const double started = audio_seconds();
-        while (g_pipe->full() && audio_seconds() - started < 1.0) SDL_Delay(1);  // at most a second: a stopped device must not hold the game
+        while (g_pipe->full() && audio_seconds() - started < 0.05) SDL_Delay(1);
         const double waited = audio_seconds() - started;
         g_pipe->note_wait(waited);
         note_audio();
-        if (!stuck && waited >= 1.0) std::fprintf(stderr, "[audio] the sound device took no sound for a second (unplugged?); the clock paces the game until it does\n");
-        stuck = waited >= 1.0;
-        return;
+        if (!stuck && waited >= 0.05) std::fprintf(stderr, "[audio] sound buffer backpressure active\n");
+        stuck = waited >= 0.05;
     }
+    // Strict high-resolution frame clock: guarantees smooth 50.0/60.0 FPS pacing without falling behind
     const std::uint64_t frequency = SDL_GetPerformanceFrequency();
     const std::uint64_t period = frequency / (ps2::g_options.pal ? 50 : 60);
     const std::uint64_t now = SDL_GetPerformanceCounter();
-    if (g_last && now - g_last < period) {
-        SDL_Delay(static_cast<Uint32>((period - (now - g_last)) * 1000 / frequency));
+    if (g_last && now < g_last + period) {
+        const std::uint64_t diff = (g_last + period) - now;
+        const Uint32 ms = static_cast<Uint32>(diff * 1000 / frequency);
+        if (ms > 1) SDL_Delay(ms - 1);
+        while (SDL_GetPerformanceCounter() < g_last + period) {
+#if defined(_WIN32)
+            YieldProcessor();
+#endif
+        }
         g_last += period;
     } else {
         g_last = now;
@@ -1467,7 +1472,7 @@ void show_speed() {
     const double queued = queued_ms();
     char stretched[40] = "";  // "audio 62 ms" is the game's sound waiting; when it is played slower, by how much
     if (g_pipe && g_pipe->tempo() < 0.995) std::snprintf(stretched, sizeof stretched, ", stretched x%.1f", 1.0 / g_pipe->tempo());
-    std::snprintf(title, sizeof title, "ps2-native-recomp  %.1f fps  CPU %.0f%%  GPU %.0f%%  RAM %.0f MB  audio %.0f ms%s", static_cast<double>(frames) / seconds,
+    std::snprintf(title, sizeof title, "DivinePort  %.1f fps  CPU %.0f%%  GPU %.0f%%  RAM %.0f MB  audio %.0f ms%s", static_cast<double>(frames) / seconds,
                   (cpu - cpu_start) / seconds * 100.0, (gpu - gpu_start) / (seconds * 10.0), resident_mb(), queued, stretched);
     g_speed_title = title;
     refresh_title();
