@@ -1396,26 +1396,19 @@ void pace() {
     if (g_audio && !(stuck && g_pipe->full())) {
         g_pipe->frame(audio_seconds());
         const double started = audio_seconds();
-        while (g_pipe->full() && audio_seconds() - started < 0.05) SDL_Delay(1);
+        while (g_pipe->full() && audio_seconds() - started < 1.0) SDL_Delay(1);
         const double waited = audio_seconds() - started;
         g_pipe->note_wait(waited);
         note_audio();
-        if (!stuck && waited >= 0.05) std::fprintf(stderr, "[audio] sound buffer backpressure active\n");
-        stuck = waited >= 0.05;
+        if (!stuck && waited >= 1.0) std::fprintf(stderr, "[audio] the sound device took no sound for a second (unplugged?); the clock paces the game until it does\n");
+        stuck = waited >= 1.0;
+        return;
     }
-    // Strict high-resolution frame clock: guarantees smooth 50.0/60.0 FPS pacing without falling behind
     const std::uint64_t frequency = SDL_GetPerformanceFrequency();
     const std::uint64_t period = frequency / (ps2::g_options.pal ? 50 : 60);
     const std::uint64_t now = SDL_GetPerformanceCounter();
-    if (g_last && now < g_last + period) {
-        const std::uint64_t diff = (g_last + period) - now;
-        const Uint32 ms = static_cast<Uint32>(diff * 1000 / frequency);
-        if (ms > 1) SDL_Delay(ms - 1);
-        while (SDL_GetPerformanceCounter() < g_last + period) {
-#if defined(_WIN32)
-            YieldProcessor();
-#endif
-        }
+    if (g_last && now - g_last < period) {
+        SDL_Delay(static_cast<Uint32>((period - (now - g_last)) * 1000 / frequency));
         g_last += period;
     } else {
         g_last = now;
